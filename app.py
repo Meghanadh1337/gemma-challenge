@@ -132,14 +132,10 @@ def create_radar_chart(metrics):
 st.markdown("<h1 style='text-align: center; font-size: 3rem;'>⚖️ SHADOW AUDITOR</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 1.2rem; margin-bottom: 3rem;'>Institutional Forensic Intelligence Platform</p>", unsafe_allow_html=True)
 
-conf_col1, conf_col2 = st.columns([2, 1])
-with conf_col1:
-    uploaded_files = st.file_uploader("Drop Forensic Evidence (PDFs)", type="pdf", accept_multiple_files=True)
-with conf_col2:
-    persona = st.radio("Intelligence Profile", ["Standard Auditor", "Aggressive Short-Seller"], horizontal=True)
-    if st.button("EXECUTE FORENSIC AUDIT"):
-        if not uploaded_files: st.warning("Requires PDF evidence.")
-        else: st.session_state.trigger_audit = True
+uploaded_files = st.file_uploader("Drop Forensic Evidence (PDFs)", type="pdf", accept_multiple_files=True)
+if st.button("EXECUTE FORENSIC AUDIT", type="primary", use_container_width=True):
+    if not uploaded_files: st.warning("Requires PDF evidence.")
+    else: st.session_state.trigger_audit = True
 
 if uploaded_files:
     unique_files = []
@@ -154,7 +150,7 @@ if uploaded_files:
     if st.session_state.get("trigger_audit"):
         with st.status("Performing Multi-Document Forensics...", expanded=True) as status:
             full_text = parse_pdfs(unique_files)
-            raw_report = run_forensic_audit(full_text, persona=persona)
+            raw_report = run_forensic_audit(full_text)
             st.session_state.last_report = raw_report
             st.session_state.trigger_audit = False
 

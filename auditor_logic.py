@@ -160,7 +160,7 @@ class Citation(BaseModel):
     quote: str
     context: str
 
-def run_forensic_audit(text: str, persona: str = "Standard Auditor") -> str:
+def run_forensic_audit(text: str) -> str:
     """
     4-Pass Adaptive Forensic Pipeline:
     0. CLASSIFY: Predict sector to select forensic ontology.
@@ -224,7 +224,16 @@ def run_forensic_audit(text: str, persona: str = "Standard Auditor") -> str:
     risk_level = "CRITICAL" if risk_score > 70 else "WARNING" if risk_score > 30 else "STABLE"
 
     # --- PASS 3: CONSTRAINED INTERPRETATION ---
+    # Centered on a single "Objective but Highly Skeptical Forensic Specialist" persona
+    persona_system_instruction = (
+        "ROLE: You are an Elite Forensic Accounting Investigator. "
+        "PHILOSOPHY: You are highly objective, meticulously evidence-driven, but deeply skeptical of management narrative. "
+        "Your mission is to uncover corporate double-speak and map numbers to known historical fraud archetypes. "
+        "TONE: Cynical, sharp, objective, and professional."
+    )
+
     interpretation_prompt = (
+        f"{persona_system_instruction}\n\n"
         f"Interpret the following results for {facts.company_name} in the {sector} sector.\n\n"
         f"FRAUD RISK SCORE: {risk_score:.2f}/100\n"
         f"METRICS: {json.dumps(metrics)}\n"
