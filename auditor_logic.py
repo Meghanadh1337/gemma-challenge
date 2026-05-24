@@ -72,6 +72,7 @@ class FinancialFacts(BaseModel):
     inventory_turnover_delta: float = 0.0
 
 class ForensicAuditReport(BaseModel):
+    internal_thought_process: str
     executive_summary: str
     executive_summary_layman: str
     narrative_drift_analysis: str
@@ -275,7 +276,10 @@ def run_forensic_audit(text: str) -> str:
         f"FRAUD RISK SCORE: {risk_score:.2f}/100\n"
         f"METRICS: {json.dumps(metrics)}\n"
         f"RATIOS: {json.dumps(engine.ratios)}\n\n"
-        "Explain the sector-specific risks identified. Does the structural complexity match known fraud archetypes?"
+        "Explain the sector-specific risks identified. Does the structural complexity match known fraud archetypes?\n"
+        "IMPORTANT RULES:\n"
+        "1. internal_thought_process: Provide your detailed, step-by-step internal reasoning here BEFORE filling out the rest.\n"
+        "2. archetype_match: Provide ONLY a 2-4 word name (e.g., 'Off-Balance Sheet Vehicle'). Do NOT write a full sentence."
     )
 
     try:
@@ -291,13 +295,6 @@ def run_forensic_audit(text: str) -> str:
             )
         )
         
-        thought_process = ""
-        if report_resp.candidates:
-            for part in report_resp.candidates[0].content.parts:
-                if getattr(part, 'thought', False):
-                    thought_process += part.text + "\n"
-
-
         result = report_resp.parsed
         citation_str = "\n".join([f"- \"{c.quote}\"\n  [Context: {c.context}]" for c in result.citations])
 
@@ -316,7 +313,7 @@ def run_forensic_audit(text: str) -> str:
             "expert_layman": result.forensic_analysis_layman,
             "archetype": result.archetype_match,
             "next_steps": "\n".join([f"{i+1}. {s}" for i, s in enumerate(result.next_steps)]),
-            "thought_trace": thought_process if thought_process else "Reasoning trace captured."
+            "thought_trace": result.internal_thought_process
         }
 
         return f"=== SHADOW_AUDITOR_RESULT ===\n{json.dumps(report_data)}\n=== END_RESULT ==="
