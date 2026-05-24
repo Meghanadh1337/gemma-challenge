@@ -42,7 +42,7 @@ class DataIntegrity(BaseModel):
     entities_found: List[str]
     filing_years: List[int]
     temporal_gaps_detected: bool
-    rejection_reason: Optional[str] = None
+    rejection_reason: str = ""
 
 class FinancialFacts(BaseModel):
     # --- UNIVERSAL SIGNALS ---
