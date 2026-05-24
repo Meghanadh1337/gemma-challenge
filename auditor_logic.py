@@ -279,7 +279,8 @@ def run_forensic_audit(text: str) -> str:
         "Explain the sector-specific risks identified. Does the structural complexity match known fraud archetypes?\n"
         "IMPORTANT RULES:\n"
         "1. internal_thought_process: Provide your detailed, step-by-step internal reasoning here BEFORE filling out the rest.\n"
-        "2. archetype_match: Provide ONLY a 2-4 word name (e.g., 'Off-Balance Sheet Vehicle'). Do NOT write a full sentence."
+        "2. archetype_match: Provide ONLY a 2-4 word name (e.g., 'Off-Balance Sheet Vehicle'). Do NOT write a full sentence.\n"
+        "3. next_steps: Write these explicitly for a regular retail investor (layman). Tell them exactly what to do next. Provide actionable search queries (e.g., 'Search SEC EDGAR for Form 8-K...') and tell them which specific documents to upload next to confirm the risks."
     )
 
     try:
