@@ -1,0 +1,21 @@
+# Virtual Environment
+gemma/
+.venv/
+venv/
+ENV/
+
+# Local Environment Credentials
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Agent/Workspace metadata
+.agents/
+scratch/
+.gemini/
+.DS_Store
