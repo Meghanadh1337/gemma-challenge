@@ -294,8 +294,9 @@ def run_forensic_audit(text: str) -> str:
         thought_process = ""
         if report_resp.candidates:
             for part in report_resp.candidates[0].content.parts:
-                if hasattr(part, 'thought') and part.thought:
-                    thought_process += part.thought
+                if getattr(part, 'thought', False):
+                    thought_process += part.text + "\n"
+
 
         result = report_resp.parsed
         citation_str = "\n".join([f"- \"{c.quote}\"\n  [Context: {c.context}]" for c in result.citations])
