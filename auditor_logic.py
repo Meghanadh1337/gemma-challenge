@@ -298,7 +298,14 @@ def run_forensic_audit(text: str) -> str:
         result = report_resp.parsed
         citation_str = "\n".join([f"- \"{c.quote}\"\n  [Context: {c.context}]" for c in result.citations])
 
+        if integrity.filing_years:
+            years_str = f"{min(integrity.filing_years)} to {max(integrity.filing_years)}" if len(integrity.filing_years) > 1 else str(integrity.filing_years[0])
+        else:
+            years_str = "Unknown Years"
+        upload_context = f"{', '.join(integrity.entities_found)} Financial Filings ({years_str})"
+
         report_data = {
+            "upload_context": upload_context,
             "score": f"{risk_score:.2f}",
             "level": risk_level,
             "metrics": metrics,

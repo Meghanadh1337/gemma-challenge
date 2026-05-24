@@ -119,6 +119,7 @@ if "last_report" in st.session_state:
 
 
         st.markdown("<hr/>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; margin-bottom: 2rem;'><span style='background-color: var(--secondary-background-color); padding: 8px 16px; border-radius: 20px; font-weight: 500; font-size: 0.95rem; border: 1px solid rgba(255,255,255,0.1); color: #94a3b8;'>📄 {data.get('upload_context', 'Financial Documents')}</span></div>", unsafe_allow_html=True)
         
         # --- PROMINENT AI REASONING TRACE ---
         st.markdown("### 🧠 AI Reasoning Trace (Real-time cognition)")
