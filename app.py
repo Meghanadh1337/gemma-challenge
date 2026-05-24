@@ -107,8 +107,16 @@ if uploaded_files:
 if "last_report" in st.session_state:
     try:
         report_data = st.session_state.last_report
+        
+        # Check if it's an integrity error payload
+        if report_data.startswith("{") and "error" in report_data:
+            err_data = json.loads(report_data)
+            st.error(err_data["error"])
+            st.stop()
+            
         json_str = report_data.split("=== SHADOW_AUDITOR_RESULT ===")[1].split("=== END_RESULT ===")[0]
         data = json.loads(json_str)
+
 
         st.markdown("<hr/>", unsafe_allow_html=True)
         

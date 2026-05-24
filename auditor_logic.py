@@ -36,10 +36,19 @@ from pydantic import BaseModel
 
 from typing import List, Optional
 
+class DataIntegrity(BaseModel):
+    is_financial_document: bool
+    single_entity_detected: bool
+    entities_found: List[str]
+    filing_years: List[int]
+    temporal_gaps_detected: bool
+    rejection_reason: Optional[str] = None
+
 class FinancialFacts(BaseModel):
     # --- UNIVERSAL SIGNALS ---
     company_name: str
     predicted_industry: str # e.g. ENERGY, TECH, BANKING, GENERAL
+    temporal_gaps_detected: bool = False
     revenue_current: float
     revenue_previous: float
     auditor_changes: int
@@ -154,6 +163,11 @@ class DeterministicForensicEngine:
         if self.metrics.get('sector_specific_risk', 0) > 0.75 or self.metrics.get('accounting_opacity', 0) > 0.75:
             score = max(score, 75.0) # Elevate to CRITICAL if extreme complexity is found
             
+        # --- TEMPORAL OPACITY PENALTY ---
+        if getattr(self.facts, 'temporal_gaps_detected', False):
+            self.metrics['integrity_of_disclosures'] = 1.0  # Max penalty for missing records
+            score = max(score, 65.0) # Baseline warning for missing data
+            
         return min(score, 100.0)
 
 class Citation(BaseModel):
@@ -162,7 +176,8 @@ class Citation(BaseModel):
 
 def run_forensic_audit(text: str) -> str:
     """
-    4-Pass Adaptive Forensic Pipeline:
+    5-Pass Adaptive Forensic Pipeline:
+    -1. INTEGRITY: Pre-flight check for relevance and continuity.
     0. CLASSIFY: Predict sector to select forensic ontology.
     1. EXTRACT: Morph extraction prompt based on sector-specific fraud archetypes.
     2. COMPUTE: Deterministic math on sector-specific ratios.
@@ -170,10 +185,31 @@ def run_forensic_audit(text: str) -> str:
     """
     api_key = get_api_key()
     if not api_key:
-        return "Error: GEMMA_API_KEY not found."
+        return json.dumps({"error": "GEMMA_API_KEY not found."})
 
     client = genai.Client(api_key=api_key)
     
+    # --- PASS -1: DATA INTEGRITY PRE-FLIGHT ---
+    try:
+        integrity_resp = client.models.generate_content(
+            model="gemma-4-31b-it",
+            contents=f"Analyze the following document for forensic integrity:\n\n{text[:30000]}",
+            config=types.GenerateContentConfig(
+                system_instruction="You are a Forensic Data Integrity Validator. Analyze the text and strictly return the requested JSON schema. If multiple companies are found, single_entity_detected is false.",
+                temperature=0,
+                response_mime_type="application/json",
+                response_schema=DataIntegrity
+            )
+        )
+        integrity = integrity_resp.parsed
+        
+        if not integrity.is_financial_document:
+            return json.dumps({"error": f"Audit Aborted: No valid financial disclosures detected. Reason: {integrity.rejection_reason or 'Irrelevant Document'}"})
+        if not integrity.single_entity_detected:
+            return json.dumps({"error": f"Audit Aborted: Contamination detected. Multiple entities found: {', '.join(integrity.entities_found)}. Please upload files for a single entity."})
+    except Exception as e:
+        return json.dumps({"error": f"Integrity Check Failed: {str(e)}"})
+
     # --- PASS 0: SECTOR CLASSIFICATION ---
     try:
         class_resp = client.models.generate_content(
@@ -214,8 +250,9 @@ def run_forensic_audit(text: str) -> str:
         )
         facts = extract_resp.parsed
         facts.predicted_industry = sector # Ensure override
+        facts.temporal_gaps_detected = integrity.temporal_gaps_detected # Pass temporal warning
     except Exception as e:
-        return f"Extraction Error: {str(e)}"
+        return json.dumps({"error": f"Extraction Error: {str(e)}"})
 
     # --- PASS 2: DETERMINISTIC COMPUTATION ---
     engine = DeterministicForensicEngine(facts)
