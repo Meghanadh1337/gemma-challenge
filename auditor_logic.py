@@ -196,7 +196,7 @@ def run_forensic_audit(text: str) -> str:
             model="gemma-4-31b-it",
             contents=f"Analyze the following document for forensic integrity:\n\n{text[:30000]}",
             config=types.GenerateContentConfig(
-                system_instruction="You are a Forensic Data Integrity Validator. Analyze the text and strictly return the requested JSON schema. If multiple companies are found, single_entity_detected is false.",
+                system_instruction="You are a Forensic Data Integrity Validator. Analyze the text and strictly return the requested JSON schema. IMPORTANT: Subsidiaries, joint ventures, and consolidated entities of the primary filer DO NOT count as multiple companies. Only set single_entity_detected to false if you find financial filings from completely unrelated primary entities (e.g., an Apple 10-K mixed with a Microsoft 10-K).",
                 temperature=0,
                 response_mime_type="application/json",
                 response_schema=DataIntegrity
