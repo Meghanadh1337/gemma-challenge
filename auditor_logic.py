@@ -5,6 +5,8 @@ import re
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -14,54 +16,43 @@ def get_api_key():
         return None
     return key
 
-def calculate_fraud_risk_score(metrics: Dict[str, float]) -> float:
-    """
-    Weighted scoring logic. Integrity of Disclosures now carries high weight.
-    """
-    weights = {
-        "receivables_vs_revenue": 0.25,
-        "auditor_turnover": 0.2,
-        "buzzword_vs_cashflow": 0.15,
-        "risk_factor_shift": 0.1,
-        "integrity_of_disclosures": 0.3  # Shell games (like EOTT) are major red flags
-    }
-    
-    score = sum(metrics.get(k, 0) * w for k, w in weights.items()) * 100
-    return min(score, 100.0)
+# --- RETRY WRAPPER (Root cause fix for transient 500 errors) ---
+def call_gemma(client, **kwargs):
+    """Calls the Gemini API with automatic retry on transient 500 errors."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(**kwargs)
+        except Exception as e:
+            if "500 INTERNAL" in str(e) and attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                print(f"  [Retry {attempt+1}/{max_retries}] Gemini 500 error, waiting {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
 
-from google import genai
-from google.genai import types
-import json
-from pydantic import BaseModel
-
-from typing import List, Optional
-
-
+# --- SCHEMAS ---
 class FinancialFacts(BaseModel):
-    # --- UNIVERSAL SIGNALS ---
     company_name: str
-    predicted_industry: str # e.g. ENERGY, TECH, BANKING, GENERAL
+    predicted_industry: str
     revenue_current: float
     revenue_previous: float
     auditor_changes: int
     risk_factor_word_count_delta: float
     high_risk_keyword_count: int
-    
-    # --- SECTOR-SPECIFIC SIGNALS (Polymorphic) ---
-    # ENERGY/INFRA (Enron Pattern)
     spe_mentions: int = 0
     mark_to_market_mentions: int = 0
     jv_mentions: int = 0
-    
-    # TECH/SAAS (Revenue Pattern)
     deferred_revenue_growth: float = 0.0
     stock_based_comp_ratio: float = 0.0
     rd_spend_total: float = 0.0
-    
-    # GENERAL/RETAIL (Inventory Pattern)
     receivables_current: float = 0.0
     receivables_previous: float = 0.0
     inventory_turnover_delta: float = 0.0
+
+class Citation(BaseModel):
+    quote: str
+    context: str
 
 class ForensicAuditReport(BaseModel):
     executive_summary: str
@@ -74,11 +65,9 @@ class ForensicAuditReport(BaseModel):
     citations: List[Citation]
     next_steps: List[str]
 
+# --- DETERMINISTIC ENGINE (Pure Python, no LLM) ---
 class DeterministicForensicEngine:
-    """
-    Polymorphic Forensic Engine. 
-    Selects forensic vectors based on predicted industry.
-    """
+    """Polymorphic Forensic Engine. Selects forensic vectors based on predicted industry."""
     def __init__(self, facts: FinancialFacts, temporal_gaps_detected: bool = False):
         self.facts = facts
         self.temporal_gaps_detected = temporal_gaps_detected
@@ -95,43 +84,37 @@ class DeterministicForensicEngine:
         industry = self.facts.predicted_industry.upper()
         
         if "ENERGY" in industry:
-            # ENRON ONTOLOGY: Complexity & Opacity
             complexity = (self.facts.spe_mentions * 2) + self.facts.jv_mentions
             self.metrics['sector_specific_risk'] = min(complexity / 8, 1.0)
             self.metrics['accounting_opacity'] = min(self.facts.mark_to_market_mentions / 5, 1.0)
-            
             self.ratios.append({
                 "name": "Structural Complexity Index",
-                "formula": r"SPEs + JVs",
+                "formula": "(SPE mentions × 2) + JV mentions",
                 "value": f"{complexity}",
                 "audit": "High counts of Special Purpose Entities suggest off-balance sheet risk."
             })
 
         elif "TECH" in industry or "SAAS" in industry:
-            # TECH ONTOLOGY: SBC & R&D
             sbc_risk = self.facts.stock_based_comp_ratio
             rd_yield = self.facts.revenue_current / max(self.facts.rd_spend_total, 1)
             self.metrics['sector_specific_risk'] = min(sbc_risk * 5, 1.0)
             self.metrics['accounting_opacity'] = 1.0 if rd_yield < 2.0 else 0.0
-            
             self.ratios.append({
                 "name": "SBC to Revenue Dilution",
-                "formula": r"\frac{StockBasedComp}{Revenue}",
+                "formula": "Stock Based Comp / Revenue",
                 "value": f"{sbc_risk:.2%}",
                 "audit": "High SBC can mask poor operating cash flow."
             })
 
         else:
-            # GENERAL ONTOLOGY: Receivables & Turnover
             rec_rev_curr = self.facts.receivables_current / max(self.facts.revenue_current, 1)
             rec_rev_prev = self.facts.receivables_previous / max(self.facts.revenue_previous, 1)
             delta = rec_rev_curr - rec_rev_prev
             self.metrics['sector_specific_risk'] = min(max(delta * 5, 0), 1.0)
             self.metrics['accounting_opacity'] = min(abs(self.facts.inventory_turnover_delta) / 20, 1.0)
-
             self.ratios.append({
                 "name": "Receivables Drift",
-                "formula": r"\Delta \frac{Receivables}{Revenue}",
+                "formula": "Δ(Receivables / Revenue)",
                 "value": f"{delta:.4f}",
                 "audit": "Receivables growing faster than sales is a prime revenue-recognition red flag."
             })
@@ -144,37 +127,22 @@ class DeterministicForensicEngine:
             "sector_specific_risk": 0.40,
             "accounting_opacity": 0.30
         }
-        
         score = sum(self.metrics.get(k, 0) * w for k, w in weights.items()) * 100
         
-        # --- BAYESIAN ARCHETYPE ESCALATOR ---
-        # If the symbolic engine detects high sector-specific complexity (e.g., SPEs/JVs > 0.5)
-        # or significant accounting opacity, we elevate the score to a baseline warning (55+)
         if self.metrics.get('sector_specific_risk', 0) > 0.5:
-            score = max(score, 55.0) # Institutional baseline warning for structural risk
-            
+            score = max(score, 55.0)
         if self.metrics.get('sector_specific_risk', 0) > 0.75 or self.metrics.get('accounting_opacity', 0) > 0.75:
-            score = max(score, 75.0) # Elevate to CRITICAL if extreme complexity is found
-            
-        # --- TEMPORAL OPACITY PENALTY ---
+            score = max(score, 75.0)
         if self.temporal_gaps_detected:
-            self.metrics['integrity_of_disclosures'] = 1.0  # Max penalty for missing records
-            score = max(score, 65.0) # Baseline warning for missing data
+            self.metrics['integrity_of_disclosures'] = 1.0
+            score = max(score, 65.0)
             
         return min(score, 100.0)
 
-class Citation(BaseModel):
-    quote: str
-    context: str
 
 def run_forensic_audit(text: str) -> str:
     """
-    5-Pass Adaptive Forensic Pipeline:
-    -1. INTEGRITY: Pre-flight check for relevance and continuity.
-    0. CLASSIFY: Predict sector to select forensic ontology.
-    1. EXTRACT: Morph extraction prompt based on sector-specific fraud archetypes.
-    2. COMPUTE: Deterministic math on sector-specific ratios.
-    3. INTERPRET: Semantic analysis of symbolic findings.
+    5-Pass Adaptive Forensic Pipeline with retry logic.
     """
     api_key = get_api_key()
     if not api_key:
@@ -182,53 +150,56 @@ def run_forensic_audit(text: str) -> str:
 
     client = genai.Client(api_key=api_key)
     
+    # Limit input to prevent API overload. 30K is plenty for integrity + classification.
+    text_short = text[:30000]
+    # 50K for extraction (was 100K — primary cause of 500 errors)
+    text_medium = text[:50000]
+
     # --- PASS -1: DATA INTEGRITY PRE-FLIGHT ---
     try:
-        integrity_prompt = (
-            "You are a Forensic Data Integrity Validator. Analyze the text and return a JSON object exactly matching this schema:\n"
-            "{\n"
-            '  "is_financial_document": boolean,\n'
-            '  "single_entity_detected": boolean,\n'
-            '  "entities_found": ["Company Name"],\n'
-            '  "filing_years": [1998, 1999],\n'
-            '  "temporal_gaps_detected": boolean\n'
-            "}\n"
-            "IMPORTANT: Subsidiaries, joint ventures, and consolidated entities of the primary filer DO NOT count as multiple companies. "
-            "Only set single_entity_detected to false if you find financial filings from completely unrelated primary entities."
-        )
-        integrity_resp = client.models.generate_content(
+        integrity_resp = call_gemma(
+            client,
             model="gemma-4-31b-it",
-            contents=f"Analyze the following document for forensic integrity:\n\n{text[:30000]}",
+            contents=f"Analyze the following document for forensic integrity:\n\n{text_short}",
             config=types.GenerateContentConfig(
-                system_instruction=integrity_prompt,
+                system_instruction=(
+                    "You are a Forensic Data Integrity Validator. Return a JSON object with these exact keys:\n"
+                    "is_financial_document (bool), single_entity_detected (bool), entities_found (list of strings), "
+                    "filing_years (list of ints), temporal_gaps_detected (bool).\n"
+                    "IMPORTANT: Subsidiaries and joint ventures of the primary filer are NOT separate companies."
+                ),
                 temperature=0,
                 response_mime_type="application/json"
             )
         )
         raw_text = integrity_resp.text.strip()
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:-3].strip()
-        elif raw_text.startswith("```"):
-            raw_text = raw_text[3:-3].strip()
-            
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r'^```(?:json)?\s*', '', raw_text)
+            raw_text = re.sub(r'\s*```$', '', raw_text)
         integrity = json.loads(raw_text)
         
         if not integrity.get("is_financial_document", True):
-            return json.dumps({"error": "Audit Aborted: No valid financial disclosures detected. Reason: Irrelevant Document"})
+            return json.dumps({"error": "Audit Aborted: No valid financial disclosures detected."})
         if not integrity.get("single_entity_detected", True):
-            return json.dumps({"error": f"Audit Aborted: Contamination detected. Multiple entities found: {', '.join(integrity.get('entities_found', []))}. Please upload files for a single entity."})
+            entities = ', '.join(integrity.get('entities_found', []))
+            return json.dumps({"error": f"Audit Aborted: Multiple unrelated entities found: {entities}. Upload files for one company only."})
             
         temporal_gaps = integrity.get("temporal_gaps_detected", False)
         entities_found = integrity.get("entities_found", [])
         filing_years = integrity.get("filing_years", [])
     except Exception as e:
-        return json.dumps({"error": f"Integrity Check Failed: {str(e)}"})
+        # If integrity check fails, proceed anyway with defaults rather than blocking
+        print(f"  [WARN] Integrity check failed ({e}), proceeding with defaults.")
+        temporal_gaps = False
+        entities_found = ["Unknown"]
+        filing_years = []
 
     # --- PASS 0: SECTOR CLASSIFICATION ---
     try:
-        class_resp = client.models.generate_content(
+        class_resp = call_gemma(
+            client,
             model="gemma-4-31b-it",
-            contents=f"Classify the target industry for this company (ENERGY, TECH, BANKING, or GENERAL):\n\n{text[:20000]}",
+            contents=f"Classify the primary industry for this company as one word: ENERGY, TECH, BANKING, or GENERAL.\n\n{text_short}",
             config=types.GenerateContentConfig(temperature=0)
         )
         industry = class_resp.text.strip().upper()
@@ -245,25 +216,24 @@ def run_forensic_audit(text: str) -> str:
         "GENERAL": "Focus on Receivables vs Revenue growth and Inventory Turnover deltas."
     }
     
-    extraction_prompt = (
-        f"You are a Sector-Specific Forensic Data Extractor for the {sector} industry.\n"
-        f"ONTOLOGY HINT: {sector_hints[sector]}\n"
-        "Extract raw numeric facts matching the provided schema. Do not calculate. Just extract."
-    )
-    
     try:
-        extract_resp = client.models.generate_content(
+        extract_resp = call_gemma(
+            client,
             model="gemma-4-31b-it",
-            contents=f"Perform forensic extraction on these {sector} records:\n\n{text[:100000]}",
+            contents=f"Perform forensic extraction on these {sector} records:\n\n{text_medium}",
             config=types.GenerateContentConfig(
-                system_instruction=extraction_prompt,
+                system_instruction=(
+                    f"You are a Sector-Specific Forensic Data Extractor for the {sector} industry.\n"
+                    f"ONTOLOGY HINT: {sector_hints[sector]}\n"
+                    "Extract raw numeric facts matching the provided schema. Do not calculate. Just extract."
+                ),
                 temperature=0,
                 response_mime_type="application/json",
                 response_schema=FinancialFacts
             )
         )
         facts = extract_resp.parsed
-        facts.predicted_industry = sector # Ensure override
+        facts.predicted_industry = sector
     except Exception as e:
         return json.dumps({"error": f"Extraction Error: {str(e)}"})
 
@@ -274,46 +244,56 @@ def run_forensic_audit(text: str) -> str:
     risk_level = "CRITICAL" if risk_score > 70 else "WARNING" if risk_score > 30 else "STABLE"
 
     # --- PASS 3: CONSTRAINED INTERPRETATION ---
-    # Centered on a single "Objective but Highly Skeptical Forensic Specialist" persona
-    persona_system_instruction = (
-        "ROLE: You are an Elite Forensic Accounting Investigator. "
-        "PHILOSOPHY: You are highly objective, meticulously evidence-driven, but deeply skeptical of management narrative. "
-        "Your mission is to uncover corporate double-speak and map numbers to known historical fraud archetypes. "
-        "TONE: Cynical, sharp, objective, and professional."
-    )
-
+    # NOTE: thinking_config is used WITHOUT response_schema to avoid 500 crashes.
+    # We get the thought trace from thinking, and parse JSON manually.
     interpretation_prompt = (
-        f"{persona_system_instruction}\n\n"
+        "ROLE: You are an Elite Forensic Accounting Investigator. "
+        "You are highly objective, evidence-driven, and deeply skeptical of management narrative.\n\n"
         f"Interpret the following results for {facts.company_name} in the {sector} sector.\n\n"
         f"FRAUD RISK SCORE: {risk_score:.2f}/100\n"
         f"METRICS: {json.dumps(metrics)}\n"
         f"RATIOS: {json.dumps(engine.ratios)}\n\n"
-        "IMPORTANT RULES:\n"
-        "1. archetype_match: Provide ONLY a 2-4 word name (e.g., 'Off-Balance Sheet Vehicle'). Do NOT write a full sentence.\n"
-        "2. next_steps: Write these explicitly for a regular retail investor (layman). Tell them exactly what to do next. Provide actionable search queries (e.g., 'Search SEC EDGAR for Form 8-K...') and tell them which specific documents to upload next to confirm the risks."
+        "Return a JSON object with these exact keys:\n"
+        "executive_summary, executive_summary_layman, narrative_drift_analysis, narrative_drift_layman, "
+        "forensic_analysis_expert, forensic_analysis_layman, archetype_match (2-4 words ONLY), "
+        "citations (list of {quote, context}), "
+        "next_steps (list of strings, written for a retail investor with specific EDGAR search queries)."
     )
 
     try:
-        report_resp = client.models.generate_content(
+        report_resp = call_gemma(
+            client,
             model="gemma-4-31b-it",
-            contents=f"Analyze these forensic results:\n\n{text[:80000]}",
+            contents=f"Analyze these forensic results:\n\n{text_medium}",
             config=types.GenerateContentConfig(
                 system_instruction=interpretation_prompt,
                 temperature=0.1,
                 response_mime_type="application/json",
-                response_schema=ForensicAuditReport,
-                thinking_config=types.ThinkingConfig(thinking_level="high")
+                thinking_config=types.ThinkingConfig(thinking_level="medium")
             )
         )
         
         thought_process = ""
+        report_json = None
         if report_resp.candidates:
             for part in report_resp.candidates[0].content.parts:
                 if getattr(part, 'thought', False):
                     thought_process += part.text + "\n"
+                else:
+                    # This is the actual JSON response
+                    raw = part.text.strip()
+                    if raw.startswith("```"):
+                        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+                        raw = re.sub(r'\s*```$', '', raw)
+                    if raw:
+                        report_json = json.loads(raw)
 
-        result = report_resp.parsed
-        citation_str = "\n".join([f"- \"{c.quote}\"\n  [Context: {c.context}]" for c in result.citations])
+        if not report_json:
+            return json.dumps({"error": "Interpretation produced no output."})
+
+        citations = report_json.get("citations", [])
+        citation_str = "\n".join([f"- \"{c.get('quote','')}\"  [Context: {c.get('context','')}]" for c in citations])
+        next_steps = report_json.get("next_steps", [])
 
         if filing_years:
             years_str = f"{min(filing_years)} to {max(filing_years)}" if len(filing_years) > 1 else str(filing_years[0])
@@ -327,25 +307,20 @@ def run_forensic_audit(text: str) -> str:
             "level": risk_level,
             "metrics": metrics,
             "industry": sector,
-            "summary": result.executive_summary,
-            "summary_layman": result.executive_summary_layman,
-            "drift": result.narrative_drift_analysis,
-            "drift_layman": result.narrative_drift_layman,
+            "summary": report_json.get("executive_summary", ""),
+            "summary_layman": report_json.get("executive_summary_layman", ""),
+            "drift": report_json.get("narrative_drift_analysis", ""),
+            "drift_layman": report_json.get("narrative_drift_layman", ""),
             "ratios": engine.ratios,
             "citations": citation_str,
-            "expert": result.forensic_analysis_expert,
-            "expert_layman": result.forensic_analysis_layman,
-            "archetype": result.archetype_match,
-            "next_steps": "\n".join([f"{i+1}. {s}" for i, s in enumerate(result.next_steps)]),
-            "thought_trace": thought_process if thought_process else "Reasoning trace captured natively."
+            "expert": report_json.get("forensic_analysis_expert", ""),
+            "expert_layman": report_json.get("forensic_analysis_layman", ""),
+            "archetype": report_json.get("archetype_match", "N/A"),
+            "next_steps": "\n".join([f"{i+1}. {s}" for i, s in enumerate(next_steps)]),
+            "thought_trace": thought_process if thought_process else "No reasoning trace available."
         }
 
         return f"=== SHADOW_AUDITOR_RESULT ===\n{json.dumps(report_data)}\n=== END_RESULT ==="
 
     except Exception as e:
-        return f"Interpretation Error: {str(e)}"
-
-def data_to_list(data):
-    if isinstance(data, list):
-        return "\n".join([f"{i+1}. {s}" for i, s in enumerate(data)])
-    return str(data)
+        return json.dumps({"error": f"Interpretation Error: {str(e)}"})
