@@ -180,9 +180,7 @@ def run_forensic_audit(text: str) -> str:
         
         if not integrity.get("is_financial_document", True):
             return json.dumps({"error": "Audit Aborted: No valid financial disclosures detected."})
-        if not integrity.get("single_entity_detected", True):
-            entities = ', '.join(integrity.get('entities_found', []))
-            return json.dumps({"error": f"Audit Aborted: Multiple unrelated entities found: {entities}. Upload files for one company only."})
+        # Multi-entity is a WARNING, not a blocker. Corporate filings always list subsidiaries.
             
         temporal_gaps = integrity.get("temporal_gaps_detected", False)
         entities_found = integrity.get("entities_found", [])
