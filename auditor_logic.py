@@ -36,13 +36,6 @@ from pydantic import BaseModel
 
 from typing import List, Optional
 
-class DataIntegrity(BaseModel):
-    is_financial_document: bool
-    single_entity_detected: bool
-    entities_found: List[str]
-    filing_years: List[int]
-    temporal_gaps_detected: bool
-    rejection_reason: str = ""
 
 class FinancialFacts(BaseModel):
     # --- UNIVERSAL SIGNALS ---
@@ -191,22 +184,43 @@ def run_forensic_audit(text: str) -> str:
     
     # --- PASS -1: DATA INTEGRITY PRE-FLIGHT ---
     try:
+        integrity_prompt = (
+            "You are a Forensic Data Integrity Validator. Analyze the text and return a JSON object exactly matching this schema:\n"
+            "{\n"
+            '  "is_financial_document": boolean,\n'
+            '  "single_entity_detected": boolean,\n'
+            '  "entities_found": ["Company Name"],\n'
+            '  "filing_years": [1998, 1999],\n'
+            '  "temporal_gaps_detected": boolean\n'
+            "}\n"
+            "IMPORTANT: Subsidiaries, joint ventures, and consolidated entities of the primary filer DO NOT count as multiple companies. "
+            "Only set single_entity_detected to false if you find financial filings from completely unrelated primary entities."
+        )
         integrity_resp = client.models.generate_content(
             model="gemma-4-31b-it",
             contents=f"Analyze the following document for forensic integrity:\n\n{text[:30000]}",
             config=types.GenerateContentConfig(
-                system_instruction="You are a Forensic Data Integrity Validator. Analyze the text and strictly return the requested JSON schema. IMPORTANT: Subsidiaries, joint ventures, and consolidated entities of the primary filer DO NOT count as multiple companies. Only set single_entity_detected to false if you find financial filings from completely unrelated primary entities (e.g., an Apple 10-K mixed with a Microsoft 10-K).",
+                system_instruction=integrity_prompt,
                 temperature=0,
-                response_mime_type="application/json",
-                response_schema=DataIntegrity
+                response_mime_type="application/json"
             )
         )
-        integrity = integrity_resp.parsed
+        raw_text = integrity_resp.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        integrity = json.loads(raw_text)
         
-        if not integrity.is_financial_document:
-            return json.dumps({"error": f"Audit Aborted: No valid financial disclosures detected. Reason: {integrity.rejection_reason or 'Irrelevant Document'}"})
-        if not integrity.single_entity_detected:
-            return json.dumps({"error": f"Audit Aborted: Contamination detected. Multiple entities found: {', '.join(integrity.entities_found)}. Please upload files for a single entity."})
+        if not integrity.get("is_financial_document", True):
+            return json.dumps({"error": "Audit Aborted: No valid financial disclosures detected. Reason: Irrelevant Document"})
+        if not integrity.get("single_entity_detected", True):
+            return json.dumps({"error": f"Audit Aborted: Contamination detected. Multiple entities found: {', '.join(integrity.get('entities_found', []))}. Please upload files for a single entity."})
+            
+        temporal_gaps = integrity.get("temporal_gaps_detected", False)
+        entities_found = integrity.get("entities_found", [])
+        filing_years = integrity.get("filing_years", [])
     except Exception as e:
         return json.dumps({"error": f"Integrity Check Failed: {str(e)}"})
 
@@ -254,7 +268,7 @@ def run_forensic_audit(text: str) -> str:
         return json.dumps({"error": f"Extraction Error: {str(e)}"})
 
     # --- PASS 2: DETERMINISTIC COMPUTATION ---
-    engine = DeterministicForensicEngine(facts, integrity.temporal_gaps_detected)
+    engine = DeterministicForensicEngine(facts, temporal_gaps)
     risk_score = engine.compute()
     metrics = engine.metrics
     risk_level = "CRITICAL" if risk_score > 70 else "WARNING" if risk_score > 30 else "STABLE"
@@ -301,11 +315,11 @@ def run_forensic_audit(text: str) -> str:
         result = report_resp.parsed
         citation_str = "\n".join([f"- \"{c.quote}\"\n  [Context: {c.context}]" for c in result.citations])
 
-        if integrity.filing_years:
-            years_str = f"{min(integrity.filing_years)} to {max(integrity.filing_years)}" if len(integrity.filing_years) > 1 else str(integrity.filing_years[0])
+        if filing_years:
+            years_str = f"{min(filing_years)} to {max(filing_years)}" if len(filing_years) > 1 else str(filing_years[0])
         else:
             years_str = "Unknown Years"
-        upload_context = f"{', '.join(integrity.entities_found)} Financial Filings ({years_str})"
+        upload_context = f"{', '.join(entities_found)} Financial Filings ({years_str})"
 
         report_data = {
             "upload_context": upload_context,
