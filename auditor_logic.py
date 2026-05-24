@@ -48,7 +48,6 @@ class FinancialFacts(BaseModel):
     # --- UNIVERSAL SIGNALS ---
     company_name: str
     predicted_industry: str # e.g. ENERGY, TECH, BANKING, GENERAL
-    temporal_gaps_detected: bool = False
     revenue_current: float
     revenue_previous: float
     auditor_changes: int
@@ -87,8 +86,9 @@ class DeterministicForensicEngine:
     Polymorphic Forensic Engine. 
     Selects forensic vectors based on predicted industry.
     """
-    def __init__(self, facts: FinancialFacts):
+    def __init__(self, facts: FinancialFacts, temporal_gaps_detected: bool = False):
         self.facts = facts
+        self.temporal_gaps_detected = temporal_gaps_detected
         self.metrics = {}
         self.ratios = []
 
@@ -164,7 +164,7 @@ class DeterministicForensicEngine:
             score = max(score, 75.0) # Elevate to CRITICAL if extreme complexity is found
             
         # --- TEMPORAL OPACITY PENALTY ---
-        if getattr(self.facts, 'temporal_gaps_detected', False):
+        if self.temporal_gaps_detected:
             self.metrics['integrity_of_disclosures'] = 1.0  # Max penalty for missing records
             score = max(score, 65.0) # Baseline warning for missing data
             
@@ -250,12 +250,11 @@ def run_forensic_audit(text: str) -> str:
         )
         facts = extract_resp.parsed
         facts.predicted_industry = sector # Ensure override
-        facts.temporal_gaps_detected = integrity.temporal_gaps_detected # Pass temporal warning
     except Exception as e:
         return json.dumps({"error": f"Extraction Error: {str(e)}"})
 
     # --- PASS 2: DETERMINISTIC COMPUTATION ---
-    engine = DeterministicForensicEngine(facts)
+    engine = DeterministicForensicEngine(facts, integrity.temporal_gaps_detected)
     risk_score = engine.compute()
     metrics = engine.metrics
     risk_level = "CRITICAL" if risk_score > 70 else "WARNING" if risk_score > 30 else "STABLE"
