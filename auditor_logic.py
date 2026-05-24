@@ -144,6 +144,16 @@ class DeterministicForensicEngine:
         }
         
         score = sum(self.metrics.get(k, 0) * w for k, w in weights.items()) * 100
+        
+        # --- BAYESIAN ARCHETYPE ESCALATOR ---
+        # If the symbolic engine detects high sector-specific complexity (e.g., SPEs/JVs > 0.5)
+        # or significant accounting opacity, we elevate the score to a baseline warning (55+)
+        if self.metrics.get('sector_specific_risk', 0) > 0.5:
+            score = max(score, 55.0) # Institutional baseline warning for structural risk
+            
+        if self.metrics.get('sector_specific_risk', 0) > 0.75 or self.metrics.get('accounting_opacity', 0) > 0.75:
+            score = max(score, 75.0) # Elevate to CRITICAL if extreme complexity is found
+            
         return min(score, 100.0)
 
 class Citation(BaseModel):
